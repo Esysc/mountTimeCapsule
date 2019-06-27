@@ -1,3 +1,5 @@
+#!/bin/bash
+#
 # Purpose: Check if there is a TimeCapsule in your network and mount it
 #     for use it under Gnu/Linux. Unmount it if it is already mounted.
 #          The mount point is created and destroyed after use (for prevent
@@ -10,6 +12,7 @@
 #   4) Run this program at boot when your network is already
 #   set up. Also, run it on logoff to umount Time Capsule.
 #   Run it as root (in kde you can prefix the command via kdesu)
+
 TIMECAPSULE_IP="192.168.0.3"                         # e.g. "192.168.1.100"
 TIMECAPSULE_VOLUME="/Data"       # also try "/Data"
 TIMECAPSULE_PASSWORD="Superuser"   # prefix special characters, e.g. \!
@@ -17,14 +20,21 @@ MOUNT_POINT=/mnt/time               # no need to create the directory
 DIR=$(dirname "${MOUNT_POINT}")
 IS_MOUNTED=`mount 2> /dev/null | grep "$MOUNT_POINT" | cut -d' ' -f3`
 TIMECAPSULE_PATH="$TIMECAPSULE_IP$TIMECAPSULE_VOLUME"
-
+USERS=$(users)
+for USER in $USERS
+do
+        CURRENTUSER=$USER
+done
+SUDO="sudo -H -u $CURRENTUSER bash -c"
 if [[ "$IS_MOUNTED" ]] ;then
-        umount $MOUNT_POINT 
+        umount $MOUNT_POINT
         rmdir $MOUNT_POINT
-        notify-send "Network disk has been safely umounted"
-        exit 0
-fi
+        $SUDO  "notify-send \"Network disk has been safely umounted\""
+        killall dolphin 2>&1 > /dev/null
+else
                 mkdir -p $MOUNT_POINT
-                mount -t cifs //$TIMECAPSULE_PATH  $MOUNT_POINT -o password=$TIMECAPSULE_PASSWORD,sec=ntlm,uid=1000,vers=1.0 
-                notify-send "Network disk has been mounted, let's start dolphin....."
-                /usr/bin/dolphin /mnt/time
+                mount -t cifs //$TIMECAPSULE_PATH  $MOUNT_POINT -o password=$TIMECAPSULE_PASSWORD,sec=ntlm,uid=1000,vers=1.0
+                $SUDO "notify-send \"Network disk has been mounted.\""
+                $SUDO "/usr/bin/dolphin /mnt/time 2>&1 > /dev/null &"
+fi
+exit 0
