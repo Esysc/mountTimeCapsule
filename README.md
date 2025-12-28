@@ -1,6 +1,6 @@
 # mountTimeCapsule
 
-Mount legacy Apple Time Capsule drives from Linux or macOS using Samba/SMB.
+Mount legacy Apple Time Capsule drives from Linux (using AFP) or macOS (using SMB).
 
 **Note**: Apple discontinued the Time Capsule in 2018. This script is for legacy
 hardware only. For modern network storage, consider alternatives like:
@@ -27,12 +27,18 @@ automatically fixed.
 
 ## Usage
 
-Everything is in the source file....
+Run the script to mount the Time Capsule (default). Use `--umount` to unmount
+if mounted.
 
 **Note about Time Capsule Shares**: The default share name is `/Data`, which is
 the main storage volume on Time Capsules. If your Time Capsule has a different
 share name, you can change it with `-v` or the `TIMECAPSULE_VOLUME` environment
 variable.
+
+## Installation
+
+For Linux: Install afpfs-ng (e.g., `sudo apt-get install afpfs-ng`)
+For macOS: No additional packages needed
 
 ## Configuration
 
@@ -40,19 +46,20 @@ Set the following environment variables before running the script (optional,
 defaults provided; can be overridden by command-line options):
 
 - `TIMECAPSULE_IP`: IP address of the Time Capsule (default: 192.168.0.3)
-- `TIMECAPSULE_VOLUME`: SMB share name on the Time Capsule (default: /Data -
+- `TIMECAPSULE_VOLUME`: Share name on the Time Capsule (default: /Data -
   the main data share)
-- `TIMECAPSULE_USER`: Your Time Capsule username (default: your_username)
+- `TIMECAPSULE_USER`: Your Time Capsule username (default: none)
 - `TIMECAPSULE_PASS`: Your Time Capsule password (default: Superuser)
-- `TIMECAPSULE_MOUNT_POINT`: Mount point path (default: /mnt/time)
+- `TIMECAPSULE_MOUNT_POINT`: Mount point path (default: ~/TimeCapsule)
 
 Command-line options (override environment variables):
 
 - `-i IP`: Set IP address
-- `-v VOLUME`: Set SMB share name (e.g., /Data)
+- `-v VOLUME`: Set share name (e.g., /Data)
 - `-u USERNAME`: Set username
 - `-p PASSWORD`: Set password
 - `-m MOUNT_POINT`: Set mount point
+- `--umount`: Unmount instead of mount
 
 Examples:
 
@@ -71,10 +78,16 @@ export TIMECAPSULE_MOUNT_POINT="/Volumes/timecapsule"
 # Mix of both (env vars with command overrides)
 export TIMECAPSULE_USER="myuser"
 ./mountTimecapsule -i 192.168.1.100 -p mypass -m /Volumes/tc
+
+# Unmount
+./mountTimecapsule --umount
 ```
 
 ## Changes
 
 - Extended to support both Linux and macOS
-- Updated to use SMB3 for better security and compatibility
+- Linux now uses AFP for better compatibility with legacy Time Capsules;
+  macOS uses SMB
+- Default mount point changed to user directory (~TimeCapsule)
+- Default username changed to none (empty)
 - Credentials removed from script; now read from environment variables

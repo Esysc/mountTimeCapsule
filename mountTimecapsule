@@ -21,9 +21,28 @@ set -o pipefail
 TIMECAPSULE_IP="${TIMECAPSULE_IP:-192.168.0.3}"                         # e.g. "192.168.1.100"
 TIMECAPSULE_VOLUME="${TIMECAPSULE_VOLUME:-/Data}"       # also try "/Data"
 # Credentials are read from environment variables: TIMECAPSULE_USER and TIMECAPSULE_PASS
-TIMECAPSULE_USERNAME="${TIMECAPSULE_USER:-your_username}"
+TIMECAPSULE_USERNAME="${TIMECAPSULE_USER:-}"
 TIMECAPSULE_PASSWORD="${TIMECAPSULE_PASS:-Superuser}"
-MOUNT_POINT="${TIMECAPSULE_MOUNT_POINT:-/mnt/time}"               # no need to create the directory
+MOUNT_POINT="${TIMECAPSULE_MOUNT_POINT:-$HOME/TimeCapsule}"               # no need to create the directory
+
+UMOUNT_MODE=false
+
+# Parse long options
+while [ $# -gt 0 ]; do
+    case $1 in
+        --umount)
+            UMOUNT_MODE=true
+            shift
+            ;;
+        --*)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
 
 # Parse command-line options
 while getopts "i:v:u:p:m:" opt; do
@@ -33,7 +52,7 @@ while getopts "i:v:u:p:m:" opt; do
         u) TIMECAPSULE_USERNAME="$OPTARG" ;;
         p) TIMECAPSULE_PASSWORD="$OPTARG" ;;
         m) MOUNT_POINT="$OPTARG" ;;
-        *) echo "Usage: $0 [-i IP] [-v VOLUME] [-u USERNAME] [-p PASSWORD] [-m MOUNT_POINT]" >&2; exit 1 ;;
+        *) echo "Usage: $0 [-i IP] [-v VOLUME] [-u USERNAME] [-p PASSWORD] [-m MOUNT_POINT] [--umount]" >&2; exit 1 ;;
     esac
 done
 
@@ -46,41 +65,81 @@ done
 OS=$(uname)
 if [ "$OS" = "Linux" ]; then
     SUDO="sudo -H -u $CURRENTUSER bash -c"
-    FILE_MANAGER="dolphin"
-    NOTIFY_CMD="notify-send"
+    if command -v dolphin > /dev/null 2>&1; then
+        FILE_MANAGER="dolphin"
+    else
+        FILE_MANAGER="xdg-open"
+    fi
+    if command -v notify-send > /dev/null 2>&1; then
+        NOTIFY_CMD="notify-send"
+    else
+        NOTIFY_CMD="echo"
+    fi
 elif [ "$OS" = "Darwin" ]; then
     SUDO="sudo -u $CURRENTUSER bash -c"
     FILE_MANAGER="open"
-    NOTIFY_CMD="osascript -e 'display notification \"\$1\" with title \"Time Capsule\"'"
 else
     echo "Unsupported OS: $OS"
     exit 1
 fi
-if mount 2>/dev/null | grep -q "$MOUNT_POINT"; then
-        umount "$MOUNT_POINT"
-        rmdir "$MOUNT_POINT"
+
+notify() {
+    if [ "$OS" = "Linux" ]; then
+        $NOTIFY_CMD "$1"
+    elif [ "$OS" = "Darwin" ]; then
+        osascript -e "display notification \"$1\" with title \"Time Capsule\""
+    fi
+}
+
+file_manager() {
+    if [ "$OS" = "Linux" ]; then
+        $SUDO "$FILE_MANAGER" "$1" > /dev/null 2>&1 &
+    elif [ "$OS" = "Darwin" ]; then
+        $SUDO "$FILE_MANAGER" "$1"
+    fi
+}
+
+if $UMOUNT_MODE; then
+    if mount 2>/dev/null | grep -q "$MOUNT_POINT"; then
         if [ "$OS" = "Linux" ]; then
-            $SUDO "notify-send \"Network disk has been safely unounted\""
-            killall dolphin > /dev/null 2>&1
-        elif [ "$OS" = "Darwin" ]; then
-            eval "$NOTIFY_CMD \"Network disk has been safely unmounted\""
+            if [ "$FILE_MANAGER" = "dolphin" ]; then
+                killall dolphin > /dev/null 2>&1
+            fi
+            fusermount -u -z "$MOUNT_POINT"
+        else
+            sudo umount "$MOUNT_POINT"
         fi
+        rmdir "$MOUNT_POINT"
+        notify "Network disk has been safely unmounted"
+    else
+        echo "Time Capsule is not mounted at $MOUNT_POINT."
+    fi
 else
+    if mount 2>/dev/null | grep -q "$MOUNT_POINT"; then
+        echo "Time Capsule is already mounted at $MOUNT_POINT."
+    else
         mkdir -p "$MOUNT_POINT"
         if [ "$OS" = "Linux" ]; then
-            # Create temporary credentials file
-            CREDS_FILE=$(mktemp)
-            echo "username=$TIMECAPSULE_USERNAME" > "$CREDS_FILE"
-            echo "password=$TIMECAPSULE_PASSWORD" >> "$CREDS_FILE"
-            echo "domain=WORKGROUP" >> "$CREDS_FILE"
-            mount -t cifs //"$TIMECAPSULE_PATH" "$MOUNT_POINT" -o credentials="$CREDS_FILE",vers=3.0,uid="$(id -u "$CURRENTUSER")",gid="$(id -g "$CURRENTUSER")",iocharset=utf8
-            rm "$CREDS_FILE"
-            $SUDO "notify-send \"Network disk has been mounted.\""
-            $SUDO "/usr/bin/dolphin $MOUNT_POINT 2>&1 > /dev/null &"
+            # Use AFP for mounting on Linux
+            AFP_VOLUME="${TIMECAPSULE_VOLUME#/}"
+            if mount_afp "afp://$TIMECAPSULE_USERNAME:$TIMECAPSULE_PASSWORD@$TIMECAPSULE_IP/$AFP_VOLUME" "$MOUNT_POINT"; then
+                notify "Network disk has been mounted."
+                $SUDO "$FILE_MANAGER" "$MOUNT_POINT" > /dev/null 2>&1 &
+            else
+                rmdir "$MOUNT_POINT"
+                echo "Failed to mount Time Capsule via AFP." >&2
+                exit 1
+            fi
         elif [ "$OS" = "Darwin" ]; then
-            mount_smbfs //"$TIMECAPSULE_USERNAME:$TIMECAPSULE_PASSWORD@$TIMECAPSULE_PATH" "$MOUNT_POINT"
-            eval "$NOTIFY_CMD \"Network disk has been mounted\""
-            $SUDO "$FILE_MANAGER $MOUNT_POINT"
+            if mount_smbfs //"$TIMECAPSULE_USERNAME:$TIMECAPSULE_PASSWORD@$TIMECAPSULE_PATH" "$MOUNT_POINT"; then
+                notify "Network disk has been mounted"
+                $SUDO "$FILE_MANAGER" "$MOUNT_POINT"
+            else
+                rmdir "$MOUNT_POINT"
+                echo "Failed to mount Time Capsule via SMB." >&2
+                exit 1
+            fi
         fi
+    fi
 fi
 exit 0
