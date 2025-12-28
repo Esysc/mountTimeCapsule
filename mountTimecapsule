@@ -27,9 +27,29 @@ MOUNT_POINT="${TIMECAPSULE_MOUNT_POINT:-$HOME/TimeCapsule}"               # no n
 
 UMOUNT_MODE=false
 
-# Parse long options
+# Parse command-line options
 while [ $# -gt 0 ]; do
     case $1 in
+        -i)
+            TIMECAPSULE_IP="$2"
+            shift 2
+            ;;
+        -v)
+            TIMECAPSULE_VOLUME="$2"
+            shift 2
+            ;;
+        -u)
+            TIMECAPSULE_USERNAME="$2"
+            shift 2
+            ;;
+        -p)
+            TIMECAPSULE_PASSWORD="$2"
+            shift 2
+            ;;
+        -m)
+            MOUNT_POINT="$2"
+            shift 2
+            ;;
         --umount)
             UMOUNT_MODE=true
             shift
@@ -39,20 +59,9 @@ while [ $# -gt 0 ]; do
             exit 1
             ;;
         *)
-            break
+            echo "Usage: $0 [-i IP] [-v VOLUME] [-u USERNAME] [-p PASSWORD] [-m MOUNT_POINT] [--umount]" >&2
+            exit 1
             ;;
-    esac
-done
-
-# Parse command-line options
-while getopts "i:v:u:p:m:" opt; do
-    case $opt in
-        i) TIMECAPSULE_IP="$OPTARG" ;;
-        v) TIMECAPSULE_VOLUME="$OPTARG" ;;
-        u) TIMECAPSULE_USERNAME="$OPTARG" ;;
-        p) TIMECAPSULE_PASSWORD="$OPTARG" ;;
-        m) MOUNT_POINT="$OPTARG" ;;
-        *) echo "Usage: $0 [-i IP] [-v VOLUME] [-u USERNAME] [-p PASSWORD] [-m MOUNT_POINT] [--umount]" >&2; exit 1 ;;
     esac
 done
 
@@ -92,6 +101,7 @@ notify() {
 }
 
 file_manager() {
+    # shellcheck disable=SC2317
     if [ "$OS" = "Linux" ]; then
         $SUDO "$FILE_MANAGER" "$1" > /dev/null 2>&1 &
     elif [ "$OS" = "Darwin" ]; then
@@ -105,12 +115,20 @@ if $UMOUNT_MODE; then
             if [ "$FILE_MANAGER" = "dolphin" ]; then
                 killall dolphin > /dev/null 2>&1
             fi
-            fusermount -u -z "$MOUNT_POINT"
+            if fusermount -u -z "$MOUNT_POINT" > /dev/null 2>&1; then
+                rmdir "$MOUNT_POINT"
+                notify "Network disk has been safely unmounted"
+            else
+                echo "Failed to unmount Time Capsule at $MOUNT_POINT."
+            fi
         else
-            sudo umount "$MOUNT_POINT"
+            if diskutil unmount force "$MOUNT_POINT"; then
+                rmdir "$MOUNT_POINT"
+                notify "Network disk has been safely unmounted"
+            else
+                echo "Failed to unmount Time Capsule at $MOUNT_POINT."
+            fi
         fi
-        rmdir "$MOUNT_POINT"
-        notify "Network disk has been safely unmounted"
     else
         echo "Time Capsule is not mounted at $MOUNT_POINT."
     fi
