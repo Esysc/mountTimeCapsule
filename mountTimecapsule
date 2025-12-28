@@ -1,40 +1,86 @@
 #!/bin/bash
+set -o pipefail
+
 #
-# Purpose: Check if there is a TimeCapsule in your network and mount it
-#     for use it under Gnu/Linux. Unmount it if it is already mounted.
+# Purpose: Check if there is a legacy Apple Time Capsule in your network and mount it
+#     for use it under Gnu/Linux or macOS. Unmount it if it is already mounted.
 #          The mount point is created and destroyed after use (for prevent
 #          automatic backup software to backup in the directory if the device
 #          is not mounted)
+# Note: Apple discontinued Time Capsule in 2018. This script is for legacy hardware.
 # Instructions:
-#   1) Install cifs-utils (sudo apt-get install cifs-utils)
-#   2) Install Dolphin or change to your preferred file manager
-#   3) Change the first four variables according to your configuration.
+#   1) For Linux: Install cifs-utils (sudo apt-get install cifs-utils)
+#      For macOS: No additional packages needed
+#   2) For Linux: Install Dolphin or change to your preferred file manager
+#      For macOS: Uses Finder
+#   3) Set environment variables or use command-line options for configuration
 #   4) Run this program at boot when your network is already
 #   set up. Also, run it on logoff to umount Time Capsule.
 #   Run it as root (in kde you can prefix the command via kdesu)
 
-TIMECAPSULE_IP="192.168.0.3"                         # e.g. "192.168.1.100"
-TIMECAPSULE_VOLUME="/Data"       # also try "/Data"
-TIMECAPSULE_PASSWORD="Superuser"   # prefix special characters, e.g. \!
-MOUNT_POINT=/mnt/time               # no need to create the directory
-DIR=$(dirname "${MOUNT_POINT}")
-IS_MOUNTED=`mount 2> /dev/null | grep "$MOUNT_POINT" | cut -d' ' -f3`
+TIMECAPSULE_IP="${TIMECAPSULE_IP:-192.168.0.3}"                         # e.g. "192.168.1.100"
+TIMECAPSULE_VOLUME="${TIMECAPSULE_VOLUME:-/Data}"       # also try "/Data"
+# Credentials are read from environment variables: TIMECAPSULE_USER and TIMECAPSULE_PASS
+TIMECAPSULE_USERNAME="${TIMECAPSULE_USER:-your_username}"
+TIMECAPSULE_PASSWORD="${TIMECAPSULE_PASS:-Superuser}"
+MOUNT_POINT="${TIMECAPSULE_MOUNT_POINT:-/mnt/time}"               # no need to create the directory
+
+# Parse command-line options
+while getopts "i:v:u:p:m:" opt; do
+    case $opt in
+        i) TIMECAPSULE_IP="$OPTARG" ;;
+        v) TIMECAPSULE_VOLUME="$OPTARG" ;;
+        u) TIMECAPSULE_USERNAME="$OPTARG" ;;
+        p) TIMECAPSULE_PASSWORD="$OPTARG" ;;
+        m) MOUNT_POINT="$OPTARG" ;;
+        *) echo "Usage: $0 [-i IP] [-v VOLUME] [-u USERNAME] [-p PASSWORD] [-m MOUNT_POINT]" >&2; exit 1 ;;
+    esac
+done
+
 TIMECAPSULE_PATH="$TIMECAPSULE_IP$TIMECAPSULE_VOLUME"
 USERS=$(users)
 for USER in $USERS
 do
         CURRENTUSER=$USER
 done
-SUDO="sudo -H -u $CURRENTUSER bash -c"
-if [[ "$IS_MOUNTED" ]] ;then
-        umount $MOUNT_POINT
-        rmdir $MOUNT_POINT
-        $SUDO  "notify-send \"Network disk has been safely umounted\""
-        killall dolphin 2>&1 > /dev/null
+OS=$(uname)
+if [ "$OS" = "Linux" ]; then
+    SUDO="sudo -H -u $CURRENTUSER bash -c"
+    FILE_MANAGER="dolphin"
+    NOTIFY_CMD="notify-send"
+elif [ "$OS" = "Darwin" ]; then
+    SUDO="sudo -u $CURRENTUSER bash -c"
+    FILE_MANAGER="open"
+    NOTIFY_CMD="osascript -e 'display notification \"\$1\" with title \"Time Capsule\"'"
 else
-                mkdir -p $MOUNT_POINT
-                mount -t cifs //$TIMECAPSULE_PATH  $MOUNT_POINT -o password=$TIMECAPSULE_PASSWORD,sec=ntlm,uid=1000,vers=1.0
-                $SUDO "notify-send \"Network disk has been mounted.\""
-                $SUDO "/usr/bin/dolphin /mnt/time 2>&1 > /dev/null &"
+    echo "Unsupported OS: $OS"
+    exit 1
+fi
+if mount 2>/dev/null | grep -q "$MOUNT_POINT"; then
+        umount "$MOUNT_POINT"
+        rmdir "$MOUNT_POINT"
+        if [ "$OS" = "Linux" ]; then
+            $SUDO "notify-send \"Network disk has been safely unounted\""
+            killall dolphin > /dev/null 2>&1
+        elif [ "$OS" = "Darwin" ]; then
+            eval "$NOTIFY_CMD \"Network disk has been safely unmounted\""
+        fi
+else
+        mkdir -p "$MOUNT_POINT"
+        if [ "$OS" = "Linux" ]; then
+            # Create temporary credentials file
+            CREDS_FILE=$(mktemp)
+            echo "username=$TIMECAPSULE_USERNAME" > "$CREDS_FILE"
+            echo "password=$TIMECAPSULE_PASSWORD" >> "$CREDS_FILE"
+            echo "domain=WORKGROUP" >> "$CREDS_FILE"
+            mount -t cifs //"$TIMECAPSULE_PATH" "$MOUNT_POINT" -o credentials="$CREDS_FILE",vers=3.0,uid="$(id -u "$CURRENTUSER")",gid="$(id -g "$CURRENTUSER")",iocharset=utf8
+            rm "$CREDS_FILE"
+            $SUDO "notify-send \"Network disk has been mounted.\""
+            $SUDO "/usr/bin/dolphin $MOUNT_POINT 2>&1 > /dev/null &"
+        elif [ "$OS" = "Darwin" ]; then
+            mount_smbfs //"$TIMECAPSULE_USERNAME:$TIMECAPSULE_PASSWORD@$TIMECAPSULE_PATH" "$MOUNT_POINT"
+            eval "$NOTIFY_CMD \"Network disk has been mounted\""
+            $SUDO "$FILE_MANAGER $MOUNT_POINT"
+        fi
 fi
 exit 0
