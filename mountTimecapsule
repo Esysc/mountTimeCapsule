@@ -22,7 +22,6 @@ TIMECAPSULE_USERNAME="${TIMECAPSULE_USER:-Superuser}"
 TIMECAPSULE_PASSWORD="${TIMECAPSULE_PASS:-Superuser}"
 MOUNT_POINT="${TIMECAPSULE_MOUNT_POINT:-$HOME/TimeCapsule}"
 OS=$(uname)
-CURRENTUSER=$USER
 UMOUNT_MODE=false
 
 # Parse command-line options
@@ -66,128 +65,156 @@ file_manager() {
     fi
 }
 
-# Ensure Vagrant is available for Linux
-if [ "$OS" = "Linux" ]; then
-    if ! command -v vagrant >/dev/null; then
-        echo "Vagrant required on Linux" >&2; exit 1
-    fi
-fi
-
-if [ "$OS" = "Linux" ]; then
-    FILE_MANAGER="dolphin"
-    SUDO="sudo -H -u $CURRENTUSER bash -c"
-elif [ "$OS" = "Darwin" ]; then
-    SUDO="sudo -u $CURRENTUSER bash -c"
-    FILE_MANAGER="open"
-else
-    echo "Unsupported OS: $OS" >&2; exit 1
-fi
-
-if $UMOUNT_MODE; then
-    echo "Unmount requested. Cleaning mounts and destroying Vagrant VM..."
-    if [ "$OS" = "Linux" ]; then
-        # Try to unmount the host-side re-share first
-        if mount | grep -q "$MOUNT_POINT"; then
-            echo "Unmounting host mount $MOUNT_POINT..."
-            sudo umount "$MOUNT_POINT" 2>/dev/null || true
-            rmdir "$MOUNT_POINT" 2>/dev/null || true
-        else
-            echo "Host mount $MOUNT_POINT not mounted"
-        fi
-
-        # Attempt to unmount the mount point inside the VM (if present)
-        VM_SUBDIR="${TIMECAPSULE_VOLUME}"
-        VM_MOUNT_DIR="/home/vagrant/mnt/${VM_SUBDIR}"
-        echo "Attempting to unmount inside VM: ${VM_MOUNT_DIR}..."
-        vagrant ssh -c "sudo umount ${VM_MOUNT_DIR} || true" -- -q || true
-
-        # Destroy the VM to fully clean up the environment
-        echo "Destroying Vagrant VM (this will remove the VM)..."
-        vagrant destroy -f || true
-        notify "Time Capsule VM destroyed and mounts cleaned"
-        echo "Vagrant VM destroyed and mounts cleaned"
-    else
-        # macOS: perform existing unmount behavior for host mounts
-        if mount | grep -q "$MOUNT_POINT"; then
-            echo "Unmounting $MOUNT_POINT..."
-            diskutil unmount force "$MOUNT_POINT" 2>/dev/null || true
-            rmdir "$MOUNT_POINT" 2>/dev/null || true
-            notify "Time Capsule unmounted"
-            echo "Unmounted successfully"
-        else
-            echo "Not mounted at $MOUNT_POINT"
-        fi
-    fi
-else
+# Return success if the Time Capsule appears mounted anywhere (by mount
+# point, share name, or IP). Useful to avoid re-running expensive mount
+# flows on either Linux or macOS.
+is_mounted() {
     if mount | grep -q "$MOUNT_POINT"; then
-        echo "Already mounted at $MOUNT_POINT"
-        file_manager "$MOUNT_POINT"
-    else
-        echo "Checking $TIMECAPSULE_IP..."
-        if ping -c 1 -W 2 "$TIMECAPSULE_IP" >/dev/null 2>&1; then
-            echo "Mounting at $MOUNT_POINT..."
-            mkdir -p "$MOUNT_POINT"
-            chmod -R 777 "$MOUNT_POINT" 2>/dev/null || true
-            case "$OS" in
-                Linux)
-                    if ! command -v vagrant >/dev/null 2>&1; then
-                        echo "Vagrant not installed. Install Vagrant and VirtualBox." >&2
-                        exit 1
-                    fi
-                    if ! vagrant status | grep -q running; then
-                        echo "Starting Vagrant VM..."
-                        export MOUNT_POINT="$MOUNT_POINT"
-                        vagrant up
-                    fi
-                    smb_options="username=$TIMECAPSULE_USERNAME,password=$TIMECAPSULE_PASSWORD,vers=1.0,sec=ntlm,uid=1000,gid=1000"
-                    # Mount inside a subdirectory of the synced folder so host folder remains visible
-                    VM_SUBDIR="${TIMECAPSULE_VOLUME}"
-                    VM_MOUNT_DIR="/home/vagrant/mnt/${VM_SUBDIR}"
-                    mount_cmd="mkdir -p ${VM_MOUNT_DIR} && sudo mount.cifs //$TIMECAPSULE_IP/$TIMECAPSULE_VOLUME ${VM_MOUNT_DIR} -o ${smb_options}"
-                    if vagrant ssh -c "sudo $mount_cmd"; then
-                        notify "✅ Time Capsule mounted in VM at ${VM_MOUNT_DIR} (SMBv1)"
-                        echo "✅ VM mounted at ${VM_MOUNT_DIR}; host synced folder is $MOUNT_POINT"
-                        # Configure Samba inside VM to re-share the mounted folder to the host
-                        echo "Configuring Samba share in VM..."
-                        SHARE_NAME="timecapsule"
-                                # restart smbd so the pre-provisioned share is active
-                                vagrant ssh -c "sudo systemctl restart smbd || sudo service smbd restart" -- -q
-
-                        # determine VM IP (exclude NAT 10.0.2.x) and attempt to mount the VM share on the host
-                        VM_IP=$(vagrant ssh -c "ip -4 addr show scope global | awk '/inet /{print \$2}' | cut -d/ -f1 | grep -v '^10\\.0\\.2\\.' | head -n1" -- -q | tr -d '\r' | tr -d '\n')
-                        if [ -z "$VM_IP" ]; then
-                            echo "Failed to detect VM IP; cannot mount guest share on host." >&2
-                        else
-                            echo "Mounting VM share //$VM_IP/${SHARE_NAME} on host $MOUNT_POINT..."
-                            if sudo mount.cifs "//$VM_IP/${SHARE_NAME}" "$MOUNT_POINT" -o vers=3.0,guest,uid="$(id -u)",gid="$(id -g)",file_mode=0777,dir_mode=0777,iocharset=utf8; then
-                                notify "✅ Time Capsule re-shared from VM and mounted on host"
-                                file_manager "$MOUNT_POINT"
-                                echo "✅ Mounted host from VM at $MOUNT_POINT"
-                            else
-                                echo "Failed to mount VM share on host. You can access files in the VM at ${VM_MOUNT_DIR}." >&2
-                            fi
-                        fi
-                    else
-                        echo "❌ Vagrant SMBv1 mount failed" >&2
-                        exit 1
-                    fi
-                    ;;
-                Darwin)
-                    TIMECAPSULE_PATH="$TIMECAPSULE_IP/$TIMECAPSULE_VOLUME"
-                    if mount_smbfs "//$TIMECAPSULE_USERNAME:$TIMECAPSULE_PASSWORD@$TIMECAPSULE_PATH" "$MOUNT_POINT"; then
-                        notify "✅ Time Capsule mounted"
-                        $SUDO "$FILE_MANAGER" "$MOUNT_POINT"
-                        echo "✅ Mounted at $MOUNT_POINT"
-                    else
-                        echo "❌ Mount failed" >&2
-                        exit 1
-                    fi
-                    ;;
-            esac
-        else
-            echo "❌ $TIMECAPSULE_IP unreachable" >&2
-            exit 1
-        fi
+        echo "$MOUNT_POINT is already in mounts list."
+        return 0
     fi
-fi
+    if [ -n "$TIMECAPSULE_VOLUME" ] && mount | grep -q "$TIMECAPSULE_VOLUME"; then
+        echo "$TIMECAPSULE_VOLUME is already in mounts list."
+        return 0
+    fi
+    if [ -n "$TIMECAPSULE_IP" ] && mount | grep -q "$TIMECAPSULE_IP"; then
+        echo "$TIMECAPSULE_IP is already in mounts list."
+        return 0
+    fi
+    return 1
+}
+
+# Return success only if the specified mount point is mounted on this host.
+is_mounted_point() {
+    mount | awk '{print $3}' | grep -Fxq "$MOUNT_POINT"
+}
+
+# Return success if the configured IP responds to a single ping.
+# Uses a short timeout so the script doesn't block long when the host is down.
+is_reachable() {
+    if [ -z "$TIMECAPSULE_IP" ]; then
+        return 1
+    fi
+    echo "Checking $TIMECAPSULE_IP..."
+    # Use platform-friendly ping options: on macOS use -W as milliseconds isn't available,
+    # so use -c 1 with -t for timeout on Darwin is not available; keep portable by
+    # trying the common options and falling back.
+    if ping -c 1 -W 2 "$TIMECAPSULE_IP" >/dev/null 2>&1; then
+        return 0
+    fi
+    if ping -c 1 -t 2 "$TIMECAPSULE_IP" >/dev/null 2>&1; then
+        return 0
+    fi
+    if ping -c 1 "$TIMECAPSULE_IP" >/dev/null 2>&1; then
+        return 0
+    fi
+    echo "❌ $TIMECAPSULE_IP unreachable" >&2
+    exit 1
+}
+
+case "$OS" in
+    Linux)
+        if $UMOUNT_MODE; then
+            echo "Unmount requested. Cleaning mounts and destroying Vagrant VM..."
+            # Try to unmount the host-side re-share first
+                if is_mounted_point; then
+                    echo "Unmounting host mount $MOUNT_POINT..."
+                    sudo umount "$MOUNT_POINT" 2>/dev/null || true
+                    rmdir "$MOUNT_POINT" 2>/dev/null || true
+                else
+                    echo "Host mount $MOUNT_POINT not mounted"
+                fi
+
+            # Destroy the VM to fully clean up the environment
+            echo "Destroying Vagrant VM (this will remove the VM)..."
+            vagrant destroy -f || true
+            notify "Time Capsule VM destroyed and mounts cleaned"
+            echo "Vagrant VM destroyed and mounts cleaned"
+        else
+            if is_mounted; then
+                echo "Time Capsule appears already mounted; skipping mount operations."
+                exit 0
+            else
+                is_reachable
+                echo "Mounting at $MOUNT_POINT..."
+                mkdir -p "$MOUNT_POINT"
+                chmod -R 777 "$MOUNT_POINT" 2>/dev/null || true
+                if ! command -v vagrant >/dev/null 2>&1; then
+                    echo "Vagrant not installed. Install Vagrant and VirtualBox." >&2
+                    exit 1
+                fi
+                if ! vagrant status | grep -q running; then
+                    echo "Starting Vagrant VM..."
+                    export MOUNT_POINT="$MOUNT_POINT"
+                    vagrant up
+                fi
+                smb_options="username=$TIMECAPSULE_USERNAME,password=$TIMECAPSULE_PASSWORD,vers=1.0,sec=ntlm,uid=1000,gid=1000"
+                VM_SUBDIR="${TIMECAPSULE_VOLUME}"
+                VM_MOUNT_DIR="/home/vagrant/mnt/${VM_SUBDIR}"
+                mount_cmd="mkdir -p ${VM_MOUNT_DIR} && sudo mount.cifs //$TIMECAPSULE_IP/$TIMECAPSULE_VOLUME ${VM_MOUNT_DIR} -o ${smb_options}"
+                if vagrant ssh -c "sudo $mount_cmd"; then
+                    notify "✅ Time Capsule mounted in VM at ${VM_MOUNT_DIR} (SMBv1)"
+                    echo "✅ VM mounted at ${VM_MOUNT_DIR}; host synced folder is $MOUNT_POINT"
+                    echo "Configuring Samba share in VM..."
+                    SHARE_NAME="timecapsule"
+                    vagrant ssh -c "sudo systemctl restart smbd || sudo service smbd restart" -- -q
+
+                    VM_IP=$(vagrant ssh -c "ip -4 addr show scope global | awk '/inet /{print \$2}' | cut -d/ -f1 | grep -v '^10\\.0\\.2\\.' | head -n1" -- -q | tr -d '\r' | tr -d '\n')
+                    if [ -z "$VM_IP" ]; then
+                        echo "Failed to detect VM IP; cannot mount guest share on host." >&2
+                    else
+                        echo "Mounting VM share //$VM_IP/${SHARE_NAME} on host $MOUNT_POINT..."
+                        if sudo mount.cifs "//$VM_IP/${SHARE_NAME}" "$MOUNT_POINT" -o vers=3.0,guest,uid="$(id -u)",gid="$(id -g)",file_mode=0777,dir_mode=0777,iocharset=utf8; then
+                            notify "✅ Time Capsule re-shared from VM and mounted on host"
+                            file_manager "$MOUNT_POINT"
+                            echo "✅ Mounted host from VM at $MOUNT_POINT"
+                        else
+                            echo "Failed to mount VM share on host. You can access files in the VM at ${VM_MOUNT_DIR}." >&2
+                        fi
+                    fi
+                else
+                    echo "❌ Vagrant SMBv1 mount failed" >&2
+                    exit 1
+                fi
+            fi
+        fi
+        ;;
+    Darwin)
+        if $UMOUNT_MODE; then
+                if is_mounted_point; then
+                    echo "Unmounting $MOUNT_POINT..."
+                    diskutil unmount force "$MOUNT_POINT" 2>/dev/null || true
+                    rmdir "$MOUNT_POINT" 2>/dev/null || true
+                    notify "Time Capsule unmounted"
+                    echo "Unmounted successfully"
+                else
+                    echo "Not mounted at $MOUNT_POINT"
+                fi
+        else
+            if is_mounted; then
+                echo "Time Capsule appears already mounted; skipping mount operations."
+                exit 0
+            else
+                echo "Checking $TIMECAPSULE_IP..."
+                is_reachable
+                echo "Mounting at $MOUNT_POINT..."
+                mkdir -p "$MOUNT_POINT"
+                TIMECAPSULE_PATH="$TIMECAPSULE_IP/$TIMECAPSULE_VOLUME"
+                if mount_smbfs "//$TIMECAPSULE_USERNAME:$TIMECAPSULE_PASSWORD@$TIMECAPSULE_PATH" "$MOUNT_POINT"; then
+                    notify "✅ Time Capsule mounted"
+                    file_manager "$MOUNT_POINT"
+                    echo "✅ Mounted at $MOUNT_POINT"
+                else
+                    echo "❌ Mount failed" >&2
+                    exit 1
+                fi
+            fi
+        fi
+        ;;
+    *)
+        echo "Unsupported OS: $OS" >&2
+        exit 1
+        ;;
+esac
+
 exit 0
