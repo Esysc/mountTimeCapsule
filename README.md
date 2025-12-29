@@ -24,20 +24,11 @@ pre-commit install
 
 Prerequisites: `vagrant` and a VirtualBox provider installed on the host.
 
-1. Start or reprovision the VM (the `Vagrantfile` will install `samba` inside
-  the VM):
-
-```bash
-vagrant up --provision
-# or, if the VM is running already:
-vagrant reload --provision
-```
-
 1. Run the mount script (it will mount the Time Capsule inside the VM using
   SMBv1 and re-share the mount to the host with SMB3):
 
 ```bash
-./mountTimecapsule -i 192.168.1.100 -v Data -m /mnt/timecapsule
+./mountTimecapsule -i 192.168.1.100 -v Data -m <home_dir>/timecapsule
 ```
 
 1. Unmount and destroy the VM when finished:
