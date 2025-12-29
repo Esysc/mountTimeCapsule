@@ -158,19 +158,15 @@ case "$OS" in
                     echo "Configuring Samba share in VM..."
                     SHARE_NAME="timecapsule"
                     vagrant ssh -c "sudo systemctl restart smbd || sudo service smbd restart" -- -q
-
-                    VM_IP=$(vagrant ssh -c "ip -4 addr show scope global | awk '/inet /{print \$2}' | cut -d/ -f1 | grep -v '^10\\.0\\.2\\.' | head -n1" -- -q | tr -d '\r' | tr -d '\n')
-                    if [ -z "$VM_IP" ]; then
-                        echo "Failed to detect VM IP; cannot mount guest share on host." >&2
+                    # VM_IP matched to Vagrantfile configuration
+                    VM_IP="192.168.56.10"
+                    echo "Mounting VM share //$VM_IP/${SHARE_NAME} on host $MOUNT_POINT..."
+                    if sudo mount.cifs "//$VM_IP/${SHARE_NAME}" "$MOUNT_POINT" -o vers=3.0,guest,uid="$(id -u)",gid="$(id -g)",file_mode=0777,dir_mode=0777,iocharset=utf8; then
+                        notify "✅ Time Capsule re-shared from VM and mounted on host"
+                        file_manager "$MOUNT_POINT"
+                        echo "✅ Mounted host from VM at $MOUNT_POINT"
                     else
-                        echo "Mounting VM share //$VM_IP/${SHARE_NAME} on host $MOUNT_POINT..."
-                        if sudo mount.cifs "//$VM_IP/${SHARE_NAME}" "$MOUNT_POINT" -o vers=3.0,guest,uid="$(id -u)",gid="$(id -g)",file_mode=0777,dir_mode=0777,iocharset=utf8; then
-                            notify "✅ Time Capsule re-shared from VM and mounted on host"
-                            file_manager "$MOUNT_POINT"
-                            echo "✅ Mounted host from VM at $MOUNT_POINT"
-                        else
-                            echo "Failed to mount VM share on host. You can access files in the VM at ${VM_MOUNT_DIR}." >&2
-                        fi
+                        echo "Failed to mount VM share on host. You can access files in the VM at ${VM_MOUNT_DIR}." >&2
                     fi
                 else
                     echo "❌ Vagrant SMBv1 mount failed" >&2
