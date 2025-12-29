@@ -16,7 +16,7 @@ set -o pipefail
 #   4) Run this program at boot when your network is already set up. Also, run it on logoff to umount Time Capsule.
 #   Run it as root (in kde you can prefix the command via kdesu)
 
-TIMECAPSULE_IP="${TIMECAPSULE_IP:-192.168.0.3}"                         
+TIMECAPSULE_IP="${TIMECAPSULE_IP:-192.168.0.3}"
 TIMECAPSULE_VOLUME="${TIMECAPSULE_VOLUME:-Data}"
 TIMECAPSULE_USERNAME="${TIMECAPSULE_USER:-Superuser}"
 TIMECAPSULE_PASSWORD="${TIMECAPSULE_PASS:-Superuser}"
@@ -159,7 +159,7 @@ else
                             echo "Failed to detect VM IP; cannot mount guest share on host." >&2
                         else
                             echo "Mounting VM share //$VM_IP/${SHARE_NAME} on host $MOUNT_POINT..."
-                            if sudo mount.cifs "//$VM_IP/${SHARE_NAME}" "$MOUNT_POINT" -o vers=3.0,guest,uid=$(id -u),gid=$(id -g),file_mode=0777,dir_mode=0777,iocharset=utf8; then
+                            if sudo mount.cifs "//$VM_IP/${SHARE_NAME}" "$MOUNT_POINT" -o vers=3.0,guest,uid="$(id -u)",gid="$(id -g)",file_mode=0777,dir_mode=0777,iocharset=utf8; then
                                 notify "✅ Time Capsule re-shared from VM and mounted on host"
                                 file_manager "$MOUNT_POINT"
                                 echo "✅ Mounted host from VM at $MOUNT_POINT"

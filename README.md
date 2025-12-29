@@ -25,7 +25,7 @@ pre-commit install
 Prerequisites: `vagrant` and a VirtualBox provider installed on the host.
 
 1. Start or reprovision the VM (the `Vagrantfile` will install `samba` inside
-   the VM):
+  the VM):
 
 ```bash
 vagrant up --provision
@@ -33,14 +33,14 @@ vagrant up --provision
 vagrant reload --provision
 ```
 
-2. Run the mount script (it will mount the Time Capsule inside the VM using
-   SMBv1 and re-share the mount to the host with SMB3):
+1. Run the mount script (it will mount the Time Capsule inside the VM using
+  SMBv1 and re-share the mount to the host with SMB3):
 
 ```bash
 ./mountTimecapsule -i 192.168.1.100 -v Data -m /mnt/timecapsule
 ```
 
-3. Unmount and destroy the VM when finished:
+1. Unmount and destroy the VM when finished:
 
 ```bash
 ./mountTimecapsule --umount
@@ -96,9 +96,10 @@ export TIMECAPSULE_MOUNT_POINT="$HOME/TimeCapsule"
 
 1. On Linux, the script starts a Vagrant VM (Ubuntu) and mounts the Time
    Capsule inside the VM using SMBv1 (NT1) if required.
-2. The VM runs `smbd` and re-shares the mounted folder to the host with a
-   modern protocol (SMB2/SMB3). The host mounts the VM share using SMB3 so the
-   host never needs to enable SMBv1.
+2. The VM runs `smbd` and re-shares the mounted folder to the host using a
+  modern protocol (SMB2/SMB3).
+  The host mounts the VM share using SMB3, so the host never needs to enable
+  SMBv1.
 
 ## Troubleshooting
 
@@ -106,7 +107,9 @@ export TIMECAPSULE_MOUNT_POINT="$HOME/TimeCapsule"
 
 ```bash
 # get host-accessible VM IP (skips NAT 10.0.2.x)
-vagrant ssh -c "ip -4 addr show scope global | awk '/inet /{print \$2}' | cut -d/ -f1 | grep -v '^10\\.0\\.2\\.' | head -n1"
+vagrant ssh -c "ip -4 addr show scope global \
+  | awk '/inet /{print \$2}' | cut -d/ -f1 | \
+  grep -v '^10\\.0\\.2\\.' | head -n1"
 
 # from host: test TCP reachability to Samba
 nc -vz VM_IP 445
